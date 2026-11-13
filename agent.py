@@ -273,9 +273,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     await _log("info", f"Job started — room: {ctx.room.name}")
 
     phone_number: Optional[str] = None
-    lead_name = "there"
-    business_name = "our company"
-    service_type = "our service"
+    lead_name = ""
+    business_name = ""
+    service_type = ""
     custom_prompt: Optional[str] = None
     voice_override: Optional[str] = None
     model_override: Optional[str] = None
@@ -285,9 +285,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         try:
             data = json.loads(ctx.job.metadata)
             phone_number   = data.get("phone_number")
-            lead_name      = data.get("lead_name", lead_name)
-            business_name  = data.get("business_name", business_name)
-            service_type   = data.get("service_type", service_type)
+            lead_name      = (data.get("lead_name") or "").strip()
+            business_name  = (data.get("business_name") or "").strip()
+            service_type   = (data.get("service_type") or "").strip()
             custom_prompt  = data.get("system_prompt")
             voice_override = data.get("voice_override")
             model_override = data.get("model_override")
@@ -373,10 +373,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Generate the greeting during the agent lifecycle, rather than after startup.
     # This avoids trying to use a session that has already been closed by a quick
     # hangup or a realtime-model error.
-    greeting = (
-        f"The call just connected. Greet the lead and ask if you're speaking with {lead_name}."
-        if phone_number else "Greet the caller warmly."
-    )
+    if phone_number and lead_name:
+        greeting = f"The call just connected. Greet the lead and ask if you're speaking with {lead_name}."
+    elif phone_number:
+        greeting = "The call just connected. Greet the person politely, introduce yourself, and ask who you're speaking with."
+    else:
+        greeting = "Greet the caller warmly."
 
     # Use RoomOptions if available (non-deprecated), else fall back
     # NEVER use close_on_disconnect=True with SIP — drops on any audio blip

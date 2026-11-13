@@ -17,7 +17,7 @@ DEFAULTS = {
     "LIVEKIT_API_KEY":         os.getenv("LIVEKIT_API_KEY", ""),
     "LIVEKIT_API_SECRET":      os.getenv("LIVEKIT_API_SECRET", ""),
     "GOOGLE_API_KEY":          os.getenv("GOOGLE_API_KEY", ""),
-    "GEMINI_MODEL":            os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview"),
+    "GEMINI_MODEL":            os.getenv("GEMINI_MODEL", "gemini-3.8-live"),
     "GEMINI_TTS_VOICE":        os.getenv("GEMINI_TTS_VOICE", "Aoede"),
     "USE_GEMINI_REALTIME":     os.getenv("USE_GEMINI_REALTIME", "true"),
     "TWILIO_SIP_DOMAIN":       os.getenv("TWILIO_SIP_DOMAIN", ""),
@@ -477,12 +477,16 @@ async def update_campaign_status(campaign_id: str, status: str) -> bool:
     return len(result.data or []) > 0
 
 
-async def update_campaign_run_stats(campaign_id: str, dispatched: int, failed: int) -> None:
+async def update_campaign_run_stats(campaign_id: str, dispatched: int, failed: int,
+                                    keep_active: bool = False) -> None:
     db = await _adb()
-    await db.table("campaigns").update({
+    row = {
         "last_run_at": datetime.now().isoformat(),
-        "total_dispatched": dispatched, "total_failed": failed, "status": "completed",
-    }).eq("id", campaign_id).execute()
+        "total_dispatched": dispatched, "total_failed": failed,
+    }
+    if not keep_active:          # one-off campaigns finish; daily/weekday ones stay active
+        row["status"] = "completed"
+    await db.table("campaigns").update(row).eq("id", campaign_id).execute()
 
 
 async def delete_campaign(campaign_id: str) -> bool:
@@ -534,7 +538,7 @@ async def get_agent_profile(profile_id: str) -> Optional[dict]:
 
 
 async def create_agent_profile(
-    name: str, voice: str = "Aoede", model: str = "gemini-3.1-flash-live-preview",
+    name: str, voice: str = "Aoede", model: str = "gemini-3.8-live",
     system_prompt: Optional[str] = None, enabled_tools: str = "[]", is_default: bool = False,
 ) -> str:
     profile_id = str(uuid.uuid4())

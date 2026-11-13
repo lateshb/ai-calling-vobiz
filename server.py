@@ -38,7 +38,7 @@ from db import (
     get_contacts, get_errors, get_logs, get_setting, get_stats, init_db, log_error,
     save_settings, set_setting, update_call_notes, update_campaign_run_stats, update_campaign_status,
 )
-from prompts import DEFAULT_SYSTEM_PROMPT
+from prompts import DEFAULT_SYSTEM_PROMPT, BUILTIN_PROMPTS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("server")
@@ -191,13 +191,34 @@ async def eff(key: str) -> str:
     return val if val else os.getenv(key, "")
 
 
+def normalize_phone(raw: Optional[str]) -> Optional[str]:
+    """Return an E.164 number, or None if it can't be understood.
+
+    Accepts +919876543210, 919876543210, 09876543210 and 9876543210
+    (10-digit numbers are treated as Indian mobiles, since calls go via Vobiz India).
+    """
+    if not raw:
+        return None
+    s = "".join(ch for ch in str(raw).strip() if ch.isdigit() or ch == "+")
+    if s.startswith("+") and len(s) >= 9:
+        return s
+    digits = s.lstrip("+")
+    if len(digits) == 10 and digits[0] in "6789":
+        return "+91" + digits
+    if len(digits) == 11 and digits.startswith("0") and digits[1] in "6789":
+        return "+91" + digits[1:]
+    if len(digits) == 12 and digits.startswith("91"):
+        return "+" + digits
+    return None
+
+
 # -- Request models --
 
 class CallRequest(BaseModel):
-    phone: str
-    lead_name: str = "there"
-    business_name: str = "our company"
-    service_type: str = "our service"
+    phone: Optional[str] = None
+    lead_name: str = ""
+    business_name: str = ""
+    service_type: str = ""
     system_prompt: Optional[str] = None
     agent_profile_id: Optional[str] = None
 
@@ -205,13 +226,19 @@ class CallRequest(BaseModel):
 class AgentProfileRequest(BaseModel):
     name: str
     voice: str = "Aoede"
-    model: str = "gemini-3.1-flash-live-preview"
+    model: str = "gemini-3.8-live"
     system_prompt: Optional[str] = None
     enabled_tools: str = "[]"
     is_default: bool = False
 
 
 class PromptRequest(BaseModel):
+    prompt: str
+
+
+class PromptLibraryItem(BaseModel):
+    id: Optional[str] = None
+    name: str
     prompt: str
 
 
@@ -472,6 +499,8 @@ async def auth_middleware(request: Request, call_next):
                 "/api/logs",
             ]
             is_admin_endpoint = any(path.startswith(prefix) for prefix in admin_only_prefixes)
+            if path == "/api/prompts" and request.method == "GET":
+                is_admin_endpoint = False   # call forms need the prompt list
             if is_admin_endpoint:
                 user_data = await get_user_data(email)
                 if not user_data or user_data.get("role") != "admin":
@@ -498,9 +527,9 @@ async def api_dispatch_call(req: CallRequest):
     if not all([url, key, secret]):
         raise HTTPException(400, "LiveKit credentials not configured. Go to Settings.")
 
-    phone = req.phone.strip()
-    if not phone.startswith("+"):
-        raise HTTPException(400, "Phone must be in E.164 format: +919876543210")
+    phone = normalize_phone(req.phone)
+    if not phone:
+        raise HTTPException(400, "Enter a valid phone number, e.g. +919876543210 or 9876543210")
 
     effective_prompt = req.system_prompt
     effective_voice = None
@@ -607,7 +636,95 @@ async def api_save_prompt(req: PromptRequest):
 @app.delete("/api/prompt")
 async def api_reset_prompt():
     await set_setting("system_prompt", "")
+    await set_setting("ACTIVE_PROMPT_ID", "builtin-appointment")
     return {"status": "reset", "prompt": DEFAULT_SYSTEM_PROMPT}
+
+
+# -- Prompt library (several saved prompts; one is "active" for all calls) --
+#
+# Saved prompts live in the settings table as JSON under PROMPT_LIBRARY.
+# The active prompt's text is still copied into "system_prompt", which is what
+# calls and campaigns already use, so nothing else had to change.
+
+async def _get_prompt_library() -> tuple[list, str]:
+    raw = await get_setting("PROMPT_LIBRARY", "")
+    try:
+        custom = json.loads(raw) if raw else []
+        if not isinstance(custom, list):
+            custom = []
+    except Exception:
+        custom = []
+    active_id = await get_setting("ACTIVE_PROMPT_ID", "")
+
+    # First run: turn the prompt that is already saved into a named library entry.
+    if not raw:
+        saved = await get_setting("system_prompt", "")
+        if saved and saved.strip() not in [b["prompt"].strip() for b in BUILTIN_PROMPTS]:
+            name = "Antivirus Bazaar (saved prompt)" if "antivirus" in saved.lower() else "My saved prompt"
+            item = {"id": f"custom-{secrets.token_hex(4)}", "name": name, "prompt": saved}
+            custom = [item]
+            active_id = item["id"]
+            await set_setting("PROMPT_LIBRARY", json.dumps(custom))
+            await set_setting("ACTIVE_PROMPT_ID", active_id)
+
+    if not active_id:
+        active_id = "builtin-appointment"
+    return custom, active_id
+
+
+def _all_prompts(custom: list) -> list:
+    return [dict(b) for b in BUILTIN_PROMPTS] + [dict(c, builtin=False) for c in custom]
+
+
+@app.get("/api/prompts")
+async def api_list_prompts():
+    custom, active_id = await _get_prompt_library()
+    return {"prompts": _all_prompts(custom), "active_id": active_id}
+
+
+@app.post("/api/prompts")
+async def api_save_prompt_item(req: PromptLibraryItem):
+    name, text = req.name.strip(), req.prompt
+    if not name or not text.strip():
+        raise HTTPException(400, "Prompt name and text are required")
+    custom, active_id = await _get_prompt_library()
+    existing = next((c for c in custom if c["id"] == req.id), None) if req.id else None
+    if existing:                         # update a saved prompt
+        existing["name"], existing["prompt"] = name, text
+        item = existing
+    else:                                # new prompt (or an edited copy of a built-in)
+        item = {"id": f"custom-{secrets.token_hex(4)}", "name": name, "prompt": text}
+        custom.append(item)
+    await set_setting("PROMPT_LIBRARY", json.dumps(custom))
+    if item["id"] == active_id:          # keep live calls in sync with the edit
+        await set_setting("system_prompt", text)
+    return {"status": "saved", "prompt": dict(item, builtin=False)}
+
+
+@app.delete("/api/prompts/{prompt_id}")
+async def api_delete_prompt_item(prompt_id: str):
+    if prompt_id.startswith("builtin-"):
+        raise HTTPException(400, "Built-in prompts can't be deleted")
+    custom, active_id = await _get_prompt_library()
+    if not any(c["id"] == prompt_id for c in custom):
+        raise HTTPException(404, "Prompt not found")
+    custom = [c for c in custom if c["id"] != prompt_id]
+    await set_setting("PROMPT_LIBRARY", json.dumps(custom))
+    if prompt_id == active_id:           # fall back to the built-in default
+        await set_setting("ACTIVE_PROMPT_ID", "builtin-appointment")
+        await set_setting("system_prompt", "")
+    return {"status": "deleted"}
+
+
+@app.post("/api/prompts/{prompt_id}/activate")
+async def api_activate_prompt(prompt_id: str):
+    custom, _ = await _get_prompt_library()
+    item = next((p for p in _all_prompts(custom) if p["id"] == prompt_id), None)
+    if not item:
+        raise HTTPException(404, "Prompt not found")
+    await set_setting("ACTIVE_PROMPT_ID", prompt_id)
+    await set_setting("system_prompt", "" if prompt_id == "builtin-appointment" else item["prompt"])
+    return {"status": "active", "active_id": prompt_id, "name": item["name"]}
 
 
 # -- Settings --
@@ -761,9 +878,9 @@ async def _dispatch_one(lk, lk_api, contact: dict, room_name: str,
         saved_prompt = prompt or (await get_setting("system_prompt", "")) or None
         metadata: dict = {
             "phone_number": contact["phone"],
-            "lead_name": contact.get("lead_name", "there"),
-            "business_name": contact.get("business_name", "our company"),
-            "service_type": contact.get("service_type", "our service"),
+            "lead_name": contact.get("lead_name") or contact.get("name") or "",
+            "business_name": contact.get("business_name") or contact.get("business") or "",
+            "service_type": contact.get("service_type") or contact.get("service") or "",
             "system_prompt": saved_prompt,
         }
         if profile:
@@ -824,10 +941,11 @@ async def _run_campaign(campaign_id: str) -> None:
                 logger.warning("Campaign run paused/aborted: Rate limit or daily cap reached.")
                 fail_count += (len(contacts) - i)
                 break
-            phone = contact.get("phone", "")
-            if not phone.startswith("+"):
+            phone = normalize_phone(contact.get("phone", ""))
+            if not phone:
                 fail_count += 1
                 continue
+            contact = {**contact, "phone": phone}
             room_name = f"camp-{campaign_id[:8]}-{phone.replace('+','')}-{random.randint(100,999)}"
             success = await _dispatch_one(lk, lk_api_module, contact, room_name, prompt, profile)
             if success:
@@ -842,7 +960,9 @@ async def _run_campaign(campaign_id: str) -> None:
     finally:
         await session.close()
 
-    await update_campaign_run_stats(campaign_id, ok_count, fail_count)
+    # Daily/weekday campaigns must stay "active", or they stop after a restart.
+    await update_campaign_run_stats(campaign_id, ok_count, fail_count,
+                                    keep_active=campaign.get("schedule_type") in ("daily", "weekdays"))
     logger.info("Campaign %s done - %d dispatched, %d failed", campaign_id, ok_count, fail_count)
 
 

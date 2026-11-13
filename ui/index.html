@@ -694,24 +694,30 @@
                     <form id="form-single-call" onsubmit="dispatchSingleCall(event)">
                         <div class="form-group">
                             <label for="sc-phone">Destination Phone Number</label>
-                            <input type="text" id="sc-phone" placeholder="+919876543210 (Leave blank to use TEST_DESTINATION_NUMBER)">
+                            <input type="text" id="sc-phone" placeholder="+919876543210 or 9876543210" required>
                         </div>
                         <div class="form-group">
                             <label for="sc-lead-name">Lead Name</label>
-                            <input type="text" id="sc-lead-name" value="Amit Sharma">
+                            <input type="text" id="sc-lead-name" placeholder="Optional - e.g. Rahul">
                         </div>
                         <div class="form-group">
                             <label for="sc-biz-name">Business Name</label>
-                            <input type="text" id="sc-biz-name" value="DentalCare Clinic">
+                            <input type="text" id="sc-biz-name" placeholder="Optional - leave blank if the prompt already names the business">
                         </div>
                         <div class="form-group">
                             <label for="sc-service-type">Service Type</label>
-                            <input type="text" id="sc-service-type" value="Dental Checkup">
+                            <input type="text" id="sc-service-type" placeholder="Optional - e.g. product, service or project name">
                         </div>
                         <div class="form-group">
                             <label for="sc-profile">Agent Profile Override (Optional)</label>
                             <select id="sc-profile">
                                 <option value="">Use Default Settings</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="sc-prompt">Prompt for this call</label>
+                            <select id="sc-prompt" class="prompt-picker">
+                                <option value="">Active prompt</option>
                             </select>
                         </div>
                         <label class="checkbox-container">
@@ -720,7 +726,7 @@
                         </label>
                         <div class="form-group" id="sc-prompt-container" style="display:none">
                             <label for="sc-custom-prompt">Custom Prompt</label>
-                            <textarea id="sc-custom-prompt" rows="5" placeholder="Specify instructions for Priya..."></textarea>
+                            <textarea id="sc-custom-prompt" rows="5" placeholder="Type a one-off prompt for this call only..."></textarea>
                         </div>
                         <button type="submit" class="btn btn-primary" id="btn-sc-dispatch" style="width: 100%">
                             <i data-lucide="phone-outgoing"></i> Call Lead Now
@@ -740,7 +746,7 @@
                                 <i data-lucide="phone-incoming" style="color: var(--accent-green)"></i>
                                 <div>
                                     <h3 id="monitor-phone">+1XXXXXXXXXX</h3>
-                                    <p id="monitor-lead" style="font-size:0.85rem; color:var(--text-secondary)">Lead: Amit Sharma</p>
+                                    <p id="monitor-lead" style="font-size:0.85rem; color:var(--text-secondary)">Lead: -</p>
                                 </div>
                             </div>
                             <span class="badge badge-green" id="monitor-status">Dialing...</span>
@@ -767,6 +773,12 @@
                             <label for="bc-profile">Agent Profile</label>
                             <select id="bc-profile">
                                 <option value="">Use Default Profile</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="bc-prompt">Prompt for these calls</label>
+                            <select id="bc-prompt" class="prompt-picker">
+                                <option value="">Active prompt</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -839,6 +851,12 @@
                             <label for="camp-profile">Agent Profile</label>
                             <select id="camp-profile">
                                 <option value="">Use Default Profile</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="camp-prompt">Prompt for this campaign</label>
+                            <select id="camp-prompt" class="prompt-picker">
+                                <option value="">Active prompt</option>
                             </select>
                         </div>
                         <div class="grid-2col">
@@ -958,9 +976,9 @@
                             <div class="form-group">
                                 <label for="agent-model">Gemini Core Model</label>
                                 <select id="agent-model">
+                                    <option value="gemini-3.8-live">gemini-3.8-live (recommended)</option>
                                     <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview</option>
-                                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                                    <option value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
+                                    <option value="gemini-2.5-flash-native-audio-preview-12-2025">gemini-2.5-flash-native-audio (older)</option>
                                 </select>
                             </div>
                         </div>
@@ -1028,20 +1046,37 @@
         <section id="panel-prompt" class="tab-panel">
             <div class="card">
                 <div class="card-header">
-                    <h2 class="card-title"><i data-lucide="file-edit"></i>Global Master System Instructions</h2>
-                    <span class="badge badge-orange" id="prompt-status-badge">Default</span>
+                    <h2 class="card-title"><i data-lucide="file-edit"></i>Call Prompts</h2>
+                    <span class="badge badge-blue" id="prompt-status-badge">Loading...</span>
                 </div>
-                <div style="margin-bottom: 1.5rem">
+                <div style="margin-bottom: 1.25rem">
                     <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.4">
-                        This system prompt is loaded as the base template when dialing leads. You can use <code>{lead_name}</code>, <code>{business_name}</code>, and <code>{service_type}</code> tags to automatically inject dynamic parameters per call.
+                        Keep several prompts here (e.g. Antivirus Bazaar, Real estate) and pick which one calls use.
+                        <strong>Use for all calls</strong> makes a prompt the default; you can also pick a prompt per call in Single Call, Batch Call and Campaigns.
+                        Optional tags filled per call: <code>{lead_name}</code>, <code>{business_name}</code>, <code>{service_type}</code>.
                     </p>
                 </div>
+                <div class="grid-2col">
+                    <div class="form-group">
+                        <label for="prompt-select">Prompt</label>
+                        <select id="prompt-select" onchange="showPromptInEditor(this.value)"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="prompt-name">Name</label>
+                        <input type="text" id="prompt-name" placeholder="e.g. Real estate - Pune project">
+                    </div>
+                </div>
+                <p id="prompt-builtin-note" style="display:none; color: var(--text-secondary); font-size: 0.8rem; margin: -0.5rem 0 0.75rem">
+                    Built-in prompt: edits are saved as a new copy.
+                </p>
                 <div class="form-group">
                     <textarea id="prompt-textarea" rows="22" style="font-family: monospace; font-size: 0.9rem; line-height: 1.5; color: #a4adc0"></textarea>
                 </div>
-                <div class="flex-row" style="justify-content: flex-end">
-                    <button class="btn btn-danger" onclick="resetGlobalPrompt()"><i data-lucide="rotate-ccw"></i> Restore Default Template</button>
-                    <button class="btn btn-primary" onclick="saveGlobalPrompt()"><i data-lucide="save"></i> Save Changes</button>
+                <div class="flex-row" style="justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem">
+                    <button class="btn btn-danger" id="btn-prompt-delete" onclick="deletePromptItem()"><i data-lucide="trash-2"></i> Delete</button>
+                    <button class="btn btn-secondary" onclick="savePromptItem(true)"><i data-lucide="copy-plus"></i> Save as New</button>
+                    <button class="btn btn-secondary" onclick="savePromptItem(false)"><i data-lucide="save"></i> Save</button>
+                    <button class="btn btn-primary" onclick="activatePromptItem()"><i data-lucide="check-circle"></i> Use for All Calls</button>
                 </div>
             </div>
         </section>
@@ -1141,7 +1176,7 @@
                 <!-- CRM Drilldown View -->
                 <div class="drilldown-container" id="crm-drilldown">
                     <div class="drilldown-header">
-                        <h3>Drill-Down: <span id="crm-drill-name" style="color:var(--accent-blue)">Amit Sharma</span> (<span id="crm-drill-phone">+91XXXXXXXXXX</span>)</h3>
+                        <h3>Drill-Down: <span id="crm-drill-name" style="color:var(--accent-blue)">-</span> (<span id="crm-drill-phone">+91XXXXXXXXXX</span>)</h3>
                         <button class="btn btn-secondary" style="padding:0.3rem 0.6rem" onclick="closeCRMDrilldown()"><i data-lucide="x"></i> Close</button>
                     </div>
                     <div class="grid-2col">
@@ -1211,9 +1246,9 @@
                             <div class="form-group">
                                 <label for="set-gemini-model">Default Live Model</label>
                                 <select id="set-gemini-model">
+                                    <option value="gemini-3.8-live">gemini-3.8-live (recommended)</option>
                                     <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview</option>
-                                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                                    <option value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
+                                    <option value="gemini-2.5-flash-native-audio-preview-12-2025">gemini-2.5-flash-native-audio (older)</option>
                                 </select>
                             </div>
                             <div class="form-group">
@@ -1614,7 +1649,7 @@
             checkRole();
             loadStats();
             loadLiveConfig();
-            loadPrompt();
+            loadPromptLibrary();
             loadAgentProfiles();
             loadAppointments();
             loadCRM();
@@ -1671,6 +1706,10 @@
                 loadCRM();
             } else if (tabId === 'agents') {
                 loadAgentProfiles();
+            } else if (tabId === 'campaigns') {
+                loadCampaigns();
+            } else if (tabId === 'prompt') {
+                loadPromptLibrary();
             } else if (tabId === 'settings') {
                 loadSettingsForm();
             } else if (tabId === 'users') {
@@ -1815,7 +1854,9 @@
             const bizName = document.getElementById("sc-biz-name").value.trim();
             const serviceType = document.getElementById("sc-service-type").value.trim();
             const agentProfileId = document.getElementById("sc-profile").value;
-            const customPrompt = document.getElementById("sc-toggle-prompt").checked ? document.getElementById("sc-custom-prompt").value.trim() : null;
+            const customPrompt = document.getElementById("sc-toggle-prompt").checked
+                ? document.getElementById("sc-custom-prompt").value.trim()
+                : promptTextFor(document.getElementById("sc-prompt").value);
 
             try {
                 const res = await fetch("/api/call", {
@@ -1832,14 +1873,14 @@
                 });
 
                 const data = await res.json();
-                if (!res.ok) throw new Error(data.detail || "Connection request failed");
+                if (!res.ok) throw new Error(errorText(data, "Connection request failed"));
 
                 // Start Monitor
                 document.getElementById("session-monitor-empty").style.display = "none";
                 const activeMon = document.getElementById("session-monitor-active");
                 activeMon.style.display = "block";
                 document.getElementById("monitor-phone").textContent = data.phone || "Test Number";
-                document.getElementById("monitor-lead").textContent = `Lead: ${leadName} | Room: ${data.room}`;
+                document.getElementById("monitor-lead").textContent = `Lead: ${leadName || "-"} | Room: ${data.room}`;
                 document.getElementById("monitor-room").textContent = data.room;
                 document.getElementById("monitor-status").textContent = "Dispatched";
 
@@ -1881,7 +1922,7 @@
                     if (lead.phone) {
                         batchLeads.push(lead);
                         const tr = document.createElement("tr");
-                        tr.innerHTML = `<td>${lead.phone}</td><td>${lead.lead_name || lead.name || 'there'}</td><td>${lead.service_type || lead.service || 'Appointment'}</td>`;
+                        tr.innerHTML = `<td>${lead.phone}</td><td>${lead.lead_name || lead.name || '-'}</td><td>${lead.service_type || lead.service || '-'}</td>`;
                         tbody.appendChild(tr);
                     }
                 }
@@ -1909,6 +1950,7 @@
             let failed = 0;
             const delay = parseInt(document.getElementById("bc-delay").value) || 5;
             const agentProfileId = document.getElementById("bc-profile").value;
+            const batchPrompt = promptTextFor(document.getElementById("bc-prompt").value);
 
             for (let i = 0; i < batchLeads.length; i++) {
                 const lead = batchLeads[i];
@@ -1921,10 +1963,11 @@
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             phone: lead.phone,
-                            lead_name: lead.lead_name || lead.name || "there",
-                            business_name: lead.business_name || lead.business || "our company",
-                            service_type: lead.service_type || lead.service || "our service",
-                            agent_profile_id: agentProfileId || null
+                            lead_name: lead.lead_name || lead.name || "",
+                            business_name: lead.business_name || lead.business || "",
+                            service_type: lead.service_type || lead.service || "",
+                            agent_profile_id: agentProfileId || null,
+                            system_prompt: batchPrompt
                         })
                     });
                     if (res.ok) {
@@ -1999,7 +2042,9 @@
             const scheduleType = document.getElementById("camp-schedule-type").value;
             const scheduleTime = document.getElementById("camp-time").value.trim();
             const delay = parseInt(document.getElementById("camp-delay").value) || 5;
-            const systemPrompt = document.getElementById("camp-toggle-prompt").checked ? document.getElementById("camp-custom-prompt").value.trim() : null;
+            const systemPrompt = document.getElementById("camp-toggle-prompt").checked
+                ? document.getElementById("camp-custom-prompt").value.trim()
+                : promptTextFor(document.getElementById("camp-prompt").value);
 
             try {
                 const res = await fetch("/api/campaigns", {
@@ -2018,7 +2063,7 @@
 
                 if (!res.ok) {
                     const data = await res.json();
-                    throw new Error(data.detail || "Failed to create campaign");
+                    throw new Error(errorText(data, "Failed to create campaign"));
                 }
 
                 alert("Campaign configured successfully!");
@@ -2253,44 +2298,124 @@
 
         // ── GLOBAL SYSTEM PROMPT ─────────────────────────────────────────────────────
 
-        async function loadPrompt() {
+        // ── PROMPT LIBRARY ───────────────────────────────────────────────────────────
+
+        let promptLibrary = [];
+        let activePromptId = "";
+
+        // FastAPI errors come back as {detail: "..."} or {detail: [{msg: ...}]}
+        function errorText(data, fallback) {
+            if (!data || !data.detail) return fallback;
+            if (typeof data.detail === "string") return data.detail;
+            if (Array.isArray(data.detail)) return data.detail.map(d => d.msg || JSON.stringify(d)).join("; ");
+            return fallback;
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+        }
+
+        // Text to send for a picked prompt; null = let the server use the active prompt
+        function promptTextFor(id) {
+            if (!id) return null;
+            const p = promptLibrary.find(x => x.id === id);
+            return p ? p.prompt : null;
+        }
+
+        async function loadPromptLibrary(selectId) {
             try {
-                const res = await fetch("/api/prompt");
+                const res = await fetch("/api/prompts");
+                if (!res.ok) return;
                 const data = await res.json();
-                document.getElementById("prompt-textarea").value = data.prompt;
-                const status = document.getElementById("prompt-status-badge");
-                if (data.is_custom) {
-                    status.textContent = "Custom Active";
-                    status.className = "badge badge-blue";
-                } else {
-                    status.textContent = "System Default";
-                    status.className = "badge badge-orange";
+                promptLibrary = data.prompts || [];
+                activePromptId = data.active_id || "";
+                const active = promptLibrary.find(p => p.id === activePromptId);
+                const activeName = active ? active.name : "Default";
+
+                // Pickers on Single Call / Batch / Campaigns
+                document.querySelectorAll(".prompt-picker").forEach(sel => {
+                    const keep = sel.value;
+                    sel.innerHTML = `<option value="">Active prompt (${escapeHtml(activeName)})</option>` +
+                        promptLibrary.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+                    if (promptLibrary.some(p => p.id === keep)) sel.value = keep;
+                });
+
+                // Prompt tab
+                const editorSel = document.getElementById("prompt-select");
+                if (editorSel) {
+                    const current = selectId || editorSel.value || activePromptId;
+                    editorSel.innerHTML = promptLibrary.map(p =>
+                        `<option value="${p.id}">${escapeHtml(p.name)}${p.id === activePromptId ? "  ✓ in use" : ""}</option>`).join("");
+                    editorSel.value = promptLibrary.some(p => p.id === current) ? current : activePromptId;
+                    showPromptInEditor(editorSel.value);
                 }
+                const badge = document.getElementById("prompt-status-badge");
+                if (badge) badge.textContent = `In use: ${activeName}`;
             } catch (err) {
-                console.error(err);
+                console.error("Prompt library load failed", err);
             }
         }
 
-        async function saveGlobalPrompt() {
+        function showPromptInEditor(id) {
+            const p = promptLibrary.find(x => x.id === id);
+            if (!p) return;
+            document.getElementById("prompt-name").value = p.name;
+            document.getElementById("prompt-textarea").value = p.prompt;
+            document.getElementById("prompt-builtin-note").style.display = p.builtin ? "block" : "none";
+            document.getElementById("btn-prompt-delete").style.display = p.builtin ? "none" : "";
+        }
+
+        async function savePromptItem(asNew) {
+            const id = document.getElementById("prompt-select").value;
+            const current = promptLibrary.find(x => x.id === id);
+            let name = document.getElementById("prompt-name").value.trim();
             const prompt = document.getElementById("prompt-textarea").value;
+            if (!prompt.trim()) { alert("The prompt is empty."); return; }
+            const makeNew = asNew || !current || current.builtin;
+            if (makeNew && current && name === current.name) name = `${name} (copy)`.replace(" (built-in) (copy)", " (my copy)");
+            if (!name) { alert("Give the prompt a name."); return; }
             try {
-                await fetch("/api/prompt", {
+                const res = await fetch("/api/prompts", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ prompt })
+                    body: JSON.stringify({ id: makeNew ? null : id, name, prompt })
                 });
-                alert("Global prompt saved!");
-                loadPrompt();
+                const data = await res.json();
+                if (!res.ok) throw new Error(errorText(data, "Could not save the prompt"));
+                await loadPromptLibrary(data.prompt.id);
+                alert(makeNew ? `Saved as "${name}".` : "Prompt saved.");
             } catch (err) {
                 alert(err.message);
             }
         }
 
-        async function resetGlobalPrompt() {
-            if (!confirm("Restore factory default appointment prompt?")) return;
+        async function activatePromptItem() {
+            const id = document.getElementById("prompt-select").value;
+            const current = promptLibrary.find(x => x.id === id);
+            if (current && !current.builtin && current.prompt !== document.getElementById("prompt-textarea").value) {
+                if (!confirm("You have unsaved edits. Use the saved version for calls?")) return;
+            }
             try {
-                await fetch("/api/prompt", { method: "DELETE" });
-                loadPrompt();
+                const res = await fetch(`/api/prompts/${encodeURIComponent(id)}/activate`, { method: "POST" });
+                const data = await res.json();
+                if (!res.ok) throw new Error(errorText(data, "Could not switch prompt"));
+                await loadPromptLibrary(id);
+                alert(`All calls will now use "${data.name}".`);
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        async function deletePromptItem() {
+            const id = document.getElementById("prompt-select").value;
+            const current = promptLibrary.find(x => x.id === id);
+            if (!current || current.builtin) return;
+            if (!confirm(`Delete "${current.name}"? This can't be undone.`)) return;
+            try {
+                const res = await fetch(`/api/prompts/${encodeURIComponent(id)}`, { method: "DELETE" });
+                const data = await res.json();
+                if (!res.ok) throw new Error(errorText(data, "Could not delete the prompt"));
+                await loadPromptLibrary();
             } catch (err) {
                 alert(err.message);
             }
@@ -2390,7 +2515,7 @@
 
                     tr.innerHTML = `
                         <td>${ts}</td>
-                        <td><strong>${l.lead_name || 'there'}</strong></td>
+                        <td><strong>${l.lead_name || '-'}</strong></td>
                         <td>${l.phone_number}</td>
                         <td><span class="badge ${badge}">${l.outcome}</span></td>
                         <td><span class="badge ${intBadge}">${interestLvlText}</span></td>
