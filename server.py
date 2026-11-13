@@ -390,7 +390,8 @@ async def serve_dashboard(request: Request):
         return RedirectResponse(url="/login", status_code=303)
     html_path = Path(__file__).parent / "ui" / "index.html"
     if html_path.exists():
-        return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        # no-store: browsers must not keep showing an old copy after an update
+        return HTMLResponse(content=html_path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
     return HTMLResponse("<h1>Dashboard not found - place index.html in ui/</h1>", status_code=404)
 
 

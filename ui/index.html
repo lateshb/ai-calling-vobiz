@@ -690,7 +690,7 @@
         <section id="panel-single-call" class="tab-panel">
             <div class="grid-2col">
                 <div class="card">
-                    <div class="card-header"><h2 class="card-title"><i data-lucide="phone-outgoing"></i>Dispatch Test Call</h2></div>
+                    <div class="card-header"><h2 class="card-title"><i data-lucide="phone-outgoing"></i>Dispatch Test Call</h2><span class="badge badge-blue" title="Dashboard version">v2.1 · 13 Nov</span></div>
                     <form id="form-single-call" onsubmit="dispatchSingleCall(event)">
                         <div class="form-group">
                             <label for="sc-phone">Destination Phone Number</label>
@@ -715,7 +715,7 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="sc-prompt">Prompt for this call</label>
+                            <label for="sc-prompt">Prompt for this call only</label>
                             <select id="sc-prompt" class="prompt-picker">
                                 <option value="">Active prompt</option>
                             </select>
@@ -773,12 +773,6 @@
                             <label for="bc-profile">Agent Profile</label>
                             <select id="bc-profile">
                                 <option value="">Use Default Profile</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="bc-prompt">Prompt for these calls</label>
-                            <select id="bc-prompt" class="prompt-picker">
-                                <option value="">Active prompt</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -851,12 +845,6 @@
                             <label for="camp-profile">Agent Profile</label>
                             <select id="camp-profile">
                                 <option value="">Use Default Profile</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="camp-prompt">Prompt for this campaign</label>
-                            <select id="camp-prompt" class="prompt-picker">
-                                <option value="">Active prompt</option>
                             </select>
                         </div>
                         <div class="grid-2col">
@@ -1051,8 +1039,8 @@
                 </div>
                 <div style="margin-bottom: 1.25rem">
                     <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.4">
-                        Keep several prompts here (e.g. Antivirus Bazaar, Real estate) and pick which one calls use.
-                        <strong>Use for all calls</strong> makes a prompt the default; you can also pick a prompt per call in Single Call, Batch Call and Campaigns.
+                        Keep several prompts here (e.g. Antivirus Bazaar, Real estate).
+                        <strong>Make Global Prompt</strong> sets the one every call uses. On the <strong>Single Call</strong> tab you can pick a different prompt for just that call.
                         Optional tags filled per call: <code>{lead_name}</code>, <code>{business_name}</code>, <code>{service_type}</code>.
                     </p>
                 </div>
@@ -1076,7 +1064,7 @@
                     <button class="btn btn-danger" id="btn-prompt-delete" onclick="deletePromptItem()"><i data-lucide="trash-2"></i> Delete</button>
                     <button class="btn btn-secondary" onclick="savePromptItem(true)"><i data-lucide="copy-plus"></i> Save as New</button>
                     <button class="btn btn-secondary" onclick="savePromptItem(false)"><i data-lucide="save"></i> Save</button>
-                    <button class="btn btn-primary" onclick="activatePromptItem()"><i data-lucide="check-circle"></i> Use for All Calls</button>
+                    <button class="btn btn-primary" onclick="activatePromptItem()"><i data-lucide="check-circle"></i> Make Global Prompt</button>
                 </div>
             </div>
         </section>
@@ -1950,7 +1938,6 @@
             let failed = 0;
             const delay = parseInt(document.getElementById("bc-delay").value) || 5;
             const agentProfileId = document.getElementById("bc-profile").value;
-            const batchPrompt = promptTextFor(document.getElementById("bc-prompt").value);
 
             for (let i = 0; i < batchLeads.length; i++) {
                 const lead = batchLeads[i];
@@ -1966,8 +1953,7 @@
                             lead_name: lead.lead_name || lead.name || "",
                             business_name: lead.business_name || lead.business || "",
                             service_type: lead.service_type || lead.service || "",
-                            agent_profile_id: agentProfileId || null,
-                            system_prompt: batchPrompt
+                            agent_profile_id: agentProfileId || null
                         })
                     });
                     if (res.ok) {
@@ -2042,9 +2028,7 @@
             const scheduleType = document.getElementById("camp-schedule-type").value;
             const scheduleTime = document.getElementById("camp-time").value.trim();
             const delay = parseInt(document.getElementById("camp-delay").value) || 5;
-            const systemPrompt = document.getElementById("camp-toggle-prompt").checked
-                ? document.getElementById("camp-custom-prompt").value.trim()
-                : promptTextFor(document.getElementById("camp-prompt").value);
+            const systemPrompt = document.getElementById("camp-toggle-prompt").checked ? document.getElementById("camp-custom-prompt").value.trim() : null;
 
             try {
                 const res = await fetch("/api/campaigns", {
@@ -2335,7 +2319,7 @@
                 // Pickers on Single Call / Batch / Campaigns
                 document.querySelectorAll(".prompt-picker").forEach(sel => {
                     const keep = sel.value;
-                    sel.innerHTML = `<option value="">Active prompt (${escapeHtml(activeName)})</option>` +
+                    sel.innerHTML = `<option value="">Global prompt (${escapeHtml(activeName)})</option>` +
                         promptLibrary.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
                     if (promptLibrary.some(p => p.id === keep)) sel.value = keep;
                 });
@@ -2345,12 +2329,12 @@
                 if (editorSel) {
                     const current = selectId || editorSel.value || activePromptId;
                     editorSel.innerHTML = promptLibrary.map(p =>
-                        `<option value="${p.id}">${escapeHtml(p.name)}${p.id === activePromptId ? "  ✓ in use" : ""}</option>`).join("");
+                        `<option value="${p.id}">${escapeHtml(p.name)}${p.id === activePromptId ? "  ✓ global" : ""}</option>`).join("");
                     editorSel.value = promptLibrary.some(p => p.id === current) ? current : activePromptId;
                     showPromptInEditor(editorSel.value);
                 }
                 const badge = document.getElementById("prompt-status-badge");
-                if (badge) badge.textContent = `In use: ${activeName}`;
+                if (badge) badge.textContent = `Global prompt: ${activeName}`;
             } catch (err) {
                 console.error("Prompt library load failed", err);
             }
@@ -2400,7 +2384,7 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(errorText(data, "Could not switch prompt"));
                 await loadPromptLibrary(id);
-                alert(`All calls will now use "${data.name}".`);
+                alert(`"${data.name}" is now the global prompt. All calls use it unless you pick another one on Single Call.`);
             } catch (err) {
                 alert(err.message);
             }
