@@ -1,0 +1,12 @@
+# Dashboard only (server.py). The LiveKit voice agent (agent.py) is NOT run on cPanel.
+fastapi>=0.110.0
+a2wsgi>=1.10.0
+pydantic>=2.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.0
+aiohttp>=3.9
+certifi>=2024.0.0
+supabase>=2.0.0
+httpx>=0.25.0
+apscheduler>=3.10.0
+livekit-api>=0.8.0
