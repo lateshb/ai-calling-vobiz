@@ -229,9 +229,13 @@ def _build_session(tools: list, system_prompt: str) -> AgentSession:
 
 
 class OutboundAssistant(Agent):
-    def __init__(self, instructions: str, greeting: str) -> None:
+    def __init__(self, instructions: str, greeting: str, answered: Optional[asyncio.Event] = None) -> None:
         super().__init__(instructions=instructions)
         self._greeting = greeting
+        # Set when the phone is picked up. The session is started while the phone
+        # is still ringing (so Gemini is already connected), and the greeting
+        # waits for this.
+        self._answered = answered
 
     async def on_enter(self) -> None:
         """Speak the opening line while this agent's session is active.
@@ -242,6 +246,11 @@ class OutboundAssistant(Agent):
         initial session activation.
         """
         try:
+            if self._answered is not None:
+                try:
+                    await asyncio.wait_for(self._answered.wait(), timeout=120)
+                except asyncio.TimeoutError:
+                    return
             await _log("info", "Requesting opening greeting")
             # SIP connections often contain a short burst of audio at answer time.
             # Do not let that noise cancel the only proactive response of the call.
@@ -262,10 +271,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     """
     Main entrypoint. Called per job. Reads metadata JSON from ctx.job.metadata.
 
-    DIAL-FIRST PATTERN — CRITICAL:
-    Start Gemini Live ONLY after create_sip_participant(wait_until_answered=True) completes.
-    If you start the session during ring time (~20-30s), the Gemini idle timeout fires
-    and the session dies silently before the call is even answered.
+    FAST PICKUP: the AI session (Gemini connection, noise filter) is started while
+    the phone rings, with its microphone input muted. On answer we unmute and the
+    greeting fires at once. If Gemini dropped during a long ring, it reconnects.
 
     NO close_on_disconnect — SIP legs have brief audio dropouts that look like disconnects.
     Instead, watch participant_disconnected event for the specific SIP identity.
@@ -331,11 +339,95 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     except Exception:
         pass
 
-    # ── Dial — MUST come before session.start() ──────────────────────────────
+    # ── Contact history (fetched now, BEFORE the call, instead of the AI calling a
+    #    lookup tool after pickup — that tool call used to delay the greeting) ──
+    gemini_model = _get_realtime_model()
+    history_text = ""
+    if phone_number:
+        try:
+            history_text = await asyncio.wait_for(tool_ctx.lookup_contact_text(phone_number), timeout=3)
+        except Exception:
+            history_text = ""
+    if history_text:
+        system_prompt += (
+            "\n\nCONTACT HISTORY (already looked up for you - do NOT call lookup_contact):\n"
+            + history_text
+        )
+    active_tools = [t for t in tool_ctx.build_tool_list(enabled_tools) if t.__name__ != "lookup_contact"]
+    await _log("info", f"Building AI session — model={gemini_model}, tools={[t.__name__ for t in active_tools]}")
+
+    if phone_number and lead_name:
+        greeting = f"The call just connected. Greet the lead and ask if you're speaking with {lead_name}."
+    elif phone_number:
+        greeting = "The call just connected. Greet the person politely, introduce yourself, and ask who you're speaking with."
+    else:
+        greeting = "Greet the caller warmly."
+
+    answered = asyncio.Event()
+    if not phone_number:
+        answered.set()
+    session_closed = {"flag": False}
+
+    def _make_session():
+        sess = _build_session(tools=active_tools, system_prompt=system_prompt)
+        _in_opts = dict(noise_cancellation=noise_cancellation.BVCTelephony())
+        if phone_number:
+            _in_opts["participant_identity"] = f"sip_{phone_number}"   # only listen to the callee
+        try:
+            _input = RoomInputOptions(**_in_opts)
+        except TypeError:
+            _in_opts.pop("participant_identity", None)
+            _input = RoomInputOptions(**_in_opts)
+        agent_obj = OutboundAssistant(instructions=system_prompt, greeting=greeting, answered=answered)
+        if _HAS_ROOM_OPTIONS:
+            from livekit.agents import RoomOptions as _RO
+            kwargs = dict(room=ctx.room, agent=agent_obj, room_options=_RO(input_options=_input))
+        else:
+            kwargs = dict(room=ctx.room, agent=agent_obj, room_input_options=_input)
+
+        def _on_session_close(event) -> None:
+            session_closed["flag"] = True
+            reason = getattr(event, "reason", "unknown")
+            error = getattr(event, "error", None)
+            logger.warning("Agent session closed — reason=%s; error=%s", reason, error or "none")
+            asyncio.create_task(_save_log("warning", "Agent session closed", f"reason={reason}; error={error or 'none'}"))
+        sess.on("close", _on_session_close)
+
+        def _on_tools_executed(event) -> None:
+            try:
+                logger.info("AI used tool(s): %s", [getattr(c, "name", "?") for c in getattr(event, "function_calls", [])])
+            except Exception:
+                pass
+        sess.on("function_tools_executed", _on_tools_executed)
+        return sess, kwargs
+
+    def _set_ears(sess, on: bool) -> None:
+        try:
+            sess.input.set_audio_enabled(on)
+        except Exception:
+            pass
+
+    # ── Start the AI while the phone rings (Gemini connects now, not after pickup) ──
+    session, _session_kwargs = _make_session()
+
+    async def _start_ai() -> None:
+        await session.start(**_session_kwargs)
+        if not answered.is_set():
+            _set_ears(session, False)          # muted until the call is answered
+        await _log("info", f"AI ready — voice={os.getenv('GEMINI_TTS_VOICE', 'Aoede')}")
+
+    # Gemini connects at the same time as the phone starts ringing.
+    start_task = asyncio.create_task(_start_ai())
+    if not phone_number:
+        await start_task
+
+    # ── Dial ─────────────────────────────────────────────────────────────────
     if phone_number:
         trunk_id = os.getenv("OUTBOUND_TRUNK_ID")
         if not trunk_id:
             await _log("error", "OUTBOUND_TRUNK_ID not set — cannot place outbound call")
+            await asyncio.gather(start_task, return_exceptions=True)
+            await session.aclose()
             ctx.shutdown()
             return
         await _log("info", f"Dialing {phone_number} via SIP trunk {trunk_id}")
@@ -357,74 +449,30 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                           reason=f"Dial failed: {str(exc)[:200]}", duration_seconds=0)
             except Exception:
                 pass
+            await asyncio.gather(start_task, return_exceptions=True)
+            try:
+                await session.aclose()
+            except Exception:
+                pass
             ctx.shutdown()
             return
-        await _log("info", f"Call ANSWERED — {phone_number} picked up, starting AI session now")
         import time as _time
         tool_ctx._call_start_time = _time.time()   # talk time, not ring time
 
-    # ── Build and start Gemini Live ──────────────────────────────────────────
-    gemini_model = _get_realtime_model()
-    await _log("info", f"Building AI session — model={gemini_model}")
-    active_tools = tool_ctx.build_tool_list(enabled_tools)
-    await _log("info", f"Tools loaded: {[t.__name__ for t in active_tools]}")
-    session = _build_session(tools=active_tools, system_prompt=system_prompt)
-
-    # Generate the greeting during the agent lifecycle, rather than after startup.
-    # This avoids trying to use a session that has already been closed by a quick
-    # hangup or a realtime-model error.
-    if phone_number and lead_name:
-        greeting = f"The call just connected. Greet the lead and ask if you're speaking with {lead_name}."
-    elif phone_number:
-        greeting = "The call just connected. Greet the person politely, introduce yourself, and ask who you're speaking with."
-    else:
-        greeting = "Greet the caller warmly."
-
-    # Use RoomOptions if available (non-deprecated), else fall back
-    # NEVER use close_on_disconnect=True with SIP — drops on any audio blip
-    if _HAS_ROOM_OPTIONS:
-        from livekit.agents import RoomOptions as _RO
-        _session_kwargs = dict(
-            room=ctx.room,
-            agent=OutboundAssistant(instructions=system_prompt, greeting=greeting),
-            room_options=_RO(input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony())),
-        )
-    else:
-        _session_kwargs = dict(
-            room=ctx.room,
-            agent=OutboundAssistant(instructions=system_prompt, greeting=greeting),
-            room_input_options=RoomInputOptions(noise_cancellation=noise_cancellation.BVCTelephony()),
-        )
-
-    def _on_session_close(event) -> None:
-        # The close event carries the model or room error that caused the session
-        # to stop. Log it so a later failure is actionable.
-        reason = getattr(event, "reason", "unknown")
-        error = getattr(event, "error", None)
-        logger.warning("Agent session closed — reason=%s; error=%s", reason, error or "none")
-
-        async def _record_close() -> None:
-            try:
-                await log_error(
-                    "agent", "Agent session closed", f"reason={reason}; error={error or 'none'}", "warning"
-                )
-            except Exception:
-                pass
-
-        asyncio.create_task(_record_close())
-
-    session.on("close", _on_session_close)
-
-    def _on_tools_executed(event) -> None:
         try:
-            names = [getattr(c, "name", "?") for c in getattr(event, "function_calls", [])]
-            logger.info("AI used tool(s): %s", names)
-        except Exception:
-            pass
-    session.on("function_tools_executed", _on_tools_executed)
-
-    await session.start(**_session_kwargs)
-    await _log("info", f"Agent session started — voice={os.getenv('GEMINI_TTS_VOICE', 'Aoede')}, greeting scheduled")
+            await start_task                    # normally finished long before pickup
+        except Exception as exc:
+            await _log("warning", f"Early AI start failed: {exc}")
+            session_closed["flag"] = True
+        if session_closed["flag"]:
+            # The early Gemini connection dropped during a long ring — reconnect now.
+            await _log("warning", "AI session closed while ringing — reconnecting")
+            session_closed["flag"] = False
+            session, _session_kwargs = _make_session()
+            await session.start(**_session_kwargs)
+        _set_ears(session, True)
+        answered.set()                                  # greeting fires now
+        await _log("info", f"Call ANSWERED — {phone_number} picked up, greeting now")
 
     # ── Optional S3 recording (runs in the background so it never delays the AI) ──
     async def _start_recording() -> None:

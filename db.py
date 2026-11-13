@@ -255,15 +255,26 @@ async def check_slot(date: str, time: str) -> bool:
 
 
 async def get_next_available(date: str, time: str) -> str:
+    """Next free hourly slot (9:00-18:00) in the 7 days after date/time.
+
+    One query for all bookings in that window (it used to be one query per hour —
+    up to 168 round trips while the caller waited)."""
     try:
         dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
     except ValueError:
         dt = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    end = dt + timedelta(days=8)
+    db = await _adb()
+    result = await (
+        db.table("appointments").select("date, time")
+        .gte("date", dt.strftime("%Y-%m-%d")).lte("date", end.strftime("%Y-%m-%d"))
+        .eq("status", "booked").execute()
+    )
+    booked = {(r.get("date"), (r.get("time") or "")[:5]) for r in (result.data or [])}
     for _ in range(7 * 24):
         dt += timedelta(hours=1)
-        if 9 <= dt.hour < 18:
-            if await check_slot(dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")):
-                return f"{dt.strftime('%Y-%m-%d')} at {dt.strftime('%H:%M')}"
+        if 9 <= dt.hour < 18 and (dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")) not in booked:
+            return f"{dt.strftime('%Y-%m-%d')} at {dt.strftime('%H:%M')}"
     return "no open slots found in the next 7 days"
 
 

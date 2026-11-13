@@ -155,6 +155,29 @@ class AppointmentTools(llm.ToolContext):
         except Exception as exc:
             return "SMS delivery failed, but booking is confirmed."
 
+    async def lookup_contact_text(self, phone: str) -> str:
+        """Contact history as text ('' if none). Runs the 3 lookups at the same time."""
+        calls, appointments, memories = await asyncio.gather(
+            get_calls_by_phone(phone), get_appointments_by_phone(phone), get_contact_memory(phone),
+            return_exceptions=True,
+        )
+        calls = calls if isinstance(calls, list) else []
+        appointments = appointments if isinstance(appointments, list) else []
+        memories = memories if isinstance(memories, list) else []
+        if not calls and not appointments and not memories:
+            return ""
+        lines = []
+        if memories:
+            lines.append(f"REMEMBERED ({len(memories)} notes):")
+            lines += [f"  • {m['insight']}" for m in memories[:10]]
+        if calls:
+            lines.append(f"CALL HISTORY ({len(calls)} calls):")
+            lines += [f"  • {(c.get('timestamp') or '')[:16]} — {c.get('outcome','?')}: {c.get('reason','')}" for c in calls[:5]]
+        if appointments:
+            lines.append(f"APPOINTMENTS ({len(appointments)}):")
+            lines += [f"  • {a.get('date')} {a.get('time')} — {a.get('service')} [{a.get('status')}]" for a in appointments[:3]]
+        return "\n".join(lines)
+
     @llm.function_tool
     async def lookup_contact(self, phone: str) -> str:
         """
